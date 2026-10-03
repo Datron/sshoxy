@@ -1,0 +1,39 @@
+#:schema https://docs.cocogitto.io/cog-schema.json
+
+branch_whitelist = ["main"]
+ignore_merge_commits = true
+generate_mono_repository_global_tag = true
+generate_mono_repository_package_tags = true
+
+pre_bump_hooks = [
+    "cargo test --workspace",
+    "cargo clippy --workspace --all-targets",
+    "cargo fmt --all -- --check",
+]
+
+post_bump_hooks = [
+    "git push",
+    "git push origin {{version}}",
+]
+
+pre_package_bump_hooks = [
+    "cargo test -p {{package}}",
+]
+
+post_package_bump_hooks = [
+    "cargo set-version --package {{package}} {{version}}",
+]
+
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "github.com"
+owner = "sshoxy"
+repository = "sshoxy"
+
+[monorepo]
+resolver = "Cargo"
+
+[monorepo.packages.sshoxy]
+path = "crates/sshoxy"
+public_api = true
