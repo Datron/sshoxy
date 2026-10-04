@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-clap = "4.6.7"
+clap = { version = "4.6.7", features = ["derive"] }
 russh = "0.63.3"
- 
+tokio = "1.53.2"
+rand = "0.10.3"
+log = "0.4.34"
+env_logger = "0.11.11"
+
+[lints]
+workspace = true

@@ -9,3 +9,9 @@ rust-version = "1.97"
 license = "MIT"
 
 [workspace.dependencies]
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
