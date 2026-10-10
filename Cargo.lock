@@ -2035,6 +2035,7 @@ dependencies = [
 name = "sshoxy"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "clap",
  "directories",
  "env_logger",
@@ -2042,6 +2043,7 @@ dependencies = [
  "portable-pty",
  "rand",
  "russh",
+ "shell-words",
  "tokio",
 ]
 

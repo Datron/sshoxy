@@ -6,14 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
-russh = "0.63.3"
-tokio = { version = "1.53.2", features = ["full", "process"] }
-rand = "0.10.3"
-log = "0.4.34"
-env_logger = "0.11.11"
 directories = "=6.0.0"
+env_logger = "0.11.11"
+log = "0.4.34"
 portable-pty = "=0.9.0"
+rand = "0.10.3"
+russh = "0.63.3"
+shell-words = "1.1.1"
+tokio = { version = "1.53.2", features = ["full", "process"] }
 
 [lints]
 workspace = true

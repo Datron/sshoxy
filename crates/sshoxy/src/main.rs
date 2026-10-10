@@ -1,6 +1,7 @@
-use std::{io::ErrorKind, sync::Arc};
+use std::{collections::HashMap, io::ErrorKind, sync::Arc};
 
 use clap::Parser;
+use portable_pty::PtySize;
 use russh::{
     ChannelId, MethodKind, MethodSet, Preferred,
     server::{self, Server as _},
@@ -30,15 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let config = Arc::new(config);
-    let mut sh = Server {
-        welcome_message: args.welcome_message,
-        command: args.command,
-        no_auth: args.no_auth,
-        state: SessionState {
-            user: String::new(),
-            public_key: None,
-        },
-    };
+    let command = shell_words::split(&args.command).map_err(|e| {
+        log::error!("Failed to parse command: {e}");
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid command")
+    })?;
+    let mut sh = Server::new(args.welcome_message.clone(), command.clone(), args.no_auth);
 
     let socket = match TcpListener::bind((args.address.clone(), args.port)).await {
         Ok(s) => s,
@@ -137,35 +134,167 @@ struct Args {
     no_auth: bool,
 }
 
-#[derive(Clone)]
-struct SessionState {
+struct Session {
     pub user: String,
     pub public_key: Option<russh::keys::ssh_key::PublicKey>,
+    pub term: String,
+    pub size: PtySize,
+    pub writers: HashMap<ChannelId, Box<dyn std::io::Write + Send>>,
+    pub killers: HashMap<ChannelId, Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    pub masters: HashMap<ChannelId, Box<dyn portable_pty::MasterPty + Send>>,
 }
 
-#[derive(Clone)]
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            user: String::new(),
+            public_key: None,
+            term: String::new(),
+            size: PtySize::default(),
+            writers: HashMap::new(),
+            killers: HashMap::new(),
+            masters: HashMap::new(),
+        }
+    }
+}
+
 struct Server {
     pub welcome_message: Option<String>,
-    pub command: String,
-    pub state: SessionState,
+    pub command: Vec<String>,
+    pub session: Session,
     pub no_auth: bool,
 }
 
 impl Server {
-    pub fn set_user(&mut self, user: &str) {
-        let new_state = SessionState {
-            user: String::from(user),
-            public_key: self.state.public_key.clone(),
-        };
-        self.state = new_state;
+    pub fn new(welcome_message: Option<String>, command: Vec<String>, no_auth: bool) -> Self {
+        Self {
+            welcome_message,
+            command,
+            session: Session::default(),
+            no_auth,
+        }
     }
 
-    pub fn set_publickey(&mut self, public_key: russh::keys::ssh_key::PublicKey) {
-        let new_state = SessionState {
-            user: self.state.user.clone(),
-            public_key: Some(public_key),
+    async fn spawn_shell(
+        &mut self,
+        channel: ChannelId,
+        session: &mut server::Session,
+    ) -> Result<(), russh::Error> {
+        let mut parts = self.command.iter();
+        let prog = parts.next().ok_or_else(|| {
+            log::error!(
+                "No command specified to run for user: {}",
+                self.session.user
+            );
+            russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::Other {
+                code: 1,
+                reason: "No command specified to run for this user".to_string(),
+            })
+        })?;
+        let pair = portable_pty::native_pty_system()
+            .openpty(self.session.size.clone())
+            .map_err(|e| {
+                log::error!("Could not setup PTY due to: {}", e);
+                russh::Error::HUP
+            })?;
+        let mut cmd = portable_pty::CommandBuilder::new(prog);
+        for a in parts {
+            cmd.arg(a.as_str());
+        }
+        cmd.env("SSHOXY_USER", self.session.user.clone());
+        cmd.env("USER", self.session.user.clone());
+
+        cmd.env(
+            "SSHOXY_PUBLIC_KEY",
+            self.session
+                .public_key
+                .clone()
+                .map(|k| k.to_string())
+                .unwrap_or_default(),
+        );
+        cmd.env("TERM", self.session.term.clone());
+
+        let mut child = match pair.slave.spawn_command(cmd) {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = session.channel_failure(channel);
+                return Ok(());
+            }
         };
-        self.state = new_state;
+        let reader = match pair.master.try_clone_reader() {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = session.channel_failure(channel);
+                return Ok(());
+            }
+        };
+        let writer = match pair.master.take_writer() {
+            Ok(w) => w,
+            Err(_) => {
+                let _ = session.channel_failure(channel);
+                return Ok(());
+            }
+        };
+        self.session.writers.insert(channel, writer);
+        self.session.killers.insert(channel, child.clone_killer());
+        self.session.masters.insert(channel, pair.master);
+        session.channel_success(channel)?;
+
+        // pump: child stdout -> ssh
+        let handle = session.handle();
+        let rt = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!("Failed to get current tokio runtime handle: {}", e);
+                return Err(russh::Error::ChannelOpenFailure(
+                    russh::ChannelOpenFailure::Other {
+                        code: 1,
+                        reason: "Couldn't spawn a shell to run a command".to_string(),
+                    },
+                ));
+            }
+        };
+        tokio::task::spawn_blocking(move || {
+            let mut owned = reader;
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = match std::io::Read::read(&mut owned, &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                let chunk = match buf.get(..n) {
+                    Some(c) => bytes::Bytes::copy_from_slice(c),
+                    None => break,
+                };
+                let h = handle.clone();
+                rt.block_on(async move {
+                    let _ = h.data(channel, chunk).await;
+                });
+            }
+        });
+
+        // waiter: child exit -> terminate program (exit_status + eof + close, else hang)
+        let handle2 = session.handle();
+        let rt2 = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => return Ok(()),
+        };
+        tokio::task::spawn_blocking(move || {
+            let status = match child.wait() {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("Failed to wait for child process: {}", e);
+                    return;
+                }
+            };
+            let code = if status.success() { 0 } else { 1 };
+            rt2.block_on(async move {
+                let _ = handle2.exit_status_request(channel, code).await;
+                let _ = handle2.eof(channel).await;
+                let _ = handle2.close(channel).await;
+            });
+        });
+        Ok(())
     }
 }
 
@@ -175,7 +304,7 @@ impl server::Handler for Server {
     async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
         log::debug!("Auth none for user: {}", user);
         if self.no_auth {
-            self.set_user(user);
+            self.session.user = user.to_string();
             return Ok(server::Auth::Accept);
         }
         let mut method_set = MethodSet::empty();
@@ -186,14 +315,22 @@ impl server::Handler for Server {
         })
     }
 
+    async fn auth_publickey_offered(
+        &mut self,
+        _u: &str,
+        _k: &russh::keys::ssh_key::PublicKey,
+    ) -> Result<server::Auth, Self::Error> {
+        Ok(server::Auth::Accept)
+    }
+
     async fn auth_publickey(
         &mut self,
         user: &str,
         public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<server::Auth, Self::Error> {
         log::debug!("Auth publickey for user: {}, key: {:?}", user, public_key);
-        self.set_user(user);
-        self.set_publickey(public_key.clone());
+        self.session.user = user.to_string();
+        self.session.public_key = Some(public_key.clone());
         Ok(server::Auth::Accept)
     }
 
@@ -246,15 +383,45 @@ impl server::Handler for Server {
 
     async fn pty_request(
         &mut self,
-        _channel: ChannelId,
-        _term: &str,
-        _col_width: u32,
-        _row_height: u32,
-        _pix_width: u32,
-        _pix_height: u32,
-        _modes: &[(russh::Pty, u32)],
-        _session: &mut server::Session,
+        channel: ChannelId,
+        term: &str,
+        col_width: u32,
+        row_height: u32,
+        pix_width: u32,
+        pix_height: u32,
+        modes: &[(russh::Pty, u32)],
+        session: &mut server::Session,
     ) -> Result<(), Self::Error> {
+        log::debug!(
+            "PTY request: channel: {:?}, term: {}, size: {}x{}, pix: {}x{}, modes: {:?}",
+            channel,
+            term,
+            col_width,
+            row_height,
+            pix_width,
+            pix_height,
+            modes
+        );
+        let term = if term.is_empty() {
+            "xterm-256color".to_string()
+        } else {
+            term.to_string()
+        };
+        self.session.term = term;
+        if let (Ok(cols), Ok(rows), Ok(pixel_width), Ok(pixel_height)) = (
+            u16::try_from(col_width),
+            u16::try_from(row_height),
+            u16::try_from(pix_width),
+            u16::try_from(pix_height),
+        ) {
+            self.session.size = PtySize {
+                cols,
+                rows,
+                pixel_width,
+                pixel_height,
+            };
+        }
+        session.channel_success(channel)?;
         Ok(())
     }
 
@@ -304,7 +471,12 @@ impl server::Server for Server {
         if let Some(addr) = peer_addr {
             log::debug!("New client connected from:{}", addr.ip());
         }
-        self.clone()
+        Self {
+            welcome_message: self.welcome_message.clone(),
+            command: self.command.clone(),
+            session: Session::default(),
+            no_auth: self.no_auth,
+        }
     }
 
     fn handle_session_error(&mut self, error: <Self::Handler as server::Handler>::Error) {
