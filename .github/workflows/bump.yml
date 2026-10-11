@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           # cargo-edit provides `cargo set-version` used by cog's
-          # post_package_bump_hooks in cog.toml.
+          # pre_bump_hooks in cog.toml.
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
           cargo binstall -y --version 7.0.0 cocogitto
           cargo binstall -y cargo-edit

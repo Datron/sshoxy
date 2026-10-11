@@ -3,26 +3,16 @@
 branch_whitelist = ["master"]
 tag_prefix = "v"
 ignore_merge_commits = true
-generate_mono_repository_global_tag = true
-generate_mono_repository_package_tags = true
 
 pre_bump_hooks = [
-    "cargo test --workspace",
     "cargo clippy --workspace --all-targets",
     "cargo fmt --all -- --check",
+    "cargo set-version --workspace {{version}}",
 ]
 
 post_bump_hooks = [
     "git push",
     "git push origin --tags",
-]
-
-pre_package_bump_hooks = [
-    "cargo test -p {{package}}",
-]
-
-post_package_bump_hooks = [
-    "cargo set-version --package {{package}} {{version}}",
 ]
 
 [changelog]
@@ -36,10 +26,3 @@ repository = "sshoxy"
 feat = { bump_minor = true }
 fix = { bump_patch = true }
 refactor = { bump_patch = true }
-
-[monorepo]
-resolver = "Cargo"
-
-[monorepo.packages.sshoxy]
-path = "crates/sshoxy"
-public_api = true
