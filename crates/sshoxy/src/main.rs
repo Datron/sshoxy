@@ -31,10 +31,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let config = Arc::new(config);
-    let command = shell_words::split(&args.command).map_err(|e| {
-        log::error!("Failed to parse command: {e}");
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid command")
-    })?;
+    let command = args
+        .command
+        .iter()
+        .flat_map(|s| {
+            shell_words::split(s).map_err(|e| {
+                log::error!("Failed to parse command: {e}");
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid command")
+            })
+        })
+        .flatten()
+        .collect::<Vec<String>>();
     let mut sh = Server::new(args.welcome_message.clone(), command.clone(), args.no_auth);
 
     let socket = match TcpListener::bind((args.address.clone(), args.port)).await {
@@ -118,8 +125,8 @@ struct Args {
     welcome_message: Option<String>,
 
     /// The program to run for each user that logs in
-    #[clap(short, long, required = true)]
-    command: String,
+    #[clap(short, long, required = true, num_args = 1..)]
+    command: Vec<String>,
 
     /// ssh timeout in seconds
     #[clap(short, long, default_value = "3600")]
