@@ -355,30 +355,59 @@ impl server::Handler for Server {
 
     async fn data(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         data: &[u8],
         _session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        if data == [3] {
-            return Err(russh::Error::Disconnect);
-        }
+        let writer = self.session.writers.get_mut(&channel).ok_or_else(|| {
+            log::error!("Received data for unknown channel: {:?}", channel);
+            russh::Error::WrongChannel
+        })?;
+        std::io::Write::write_all(writer.as_mut(), data).map_err(|e| {
+            log::error!("Failed to write to child stdin: {e}");
+            russh::Error::IO(e)
+        })?;
+        std::io::Write::flush(writer.as_mut()).map_err(|e| {
+            log::error!("Failed to flush child stdin: {e}");
+            russh::Error::IO(e)
+        })?;
         Ok(())
     }
 
     async fn channel_close(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         _session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        Ok(())
+        let mut killer = self.session.killers.remove(&channel).ok_or_else(|| {
+            log::error!("Close for unknown channel: {:?}", channel);
+            russh::Error::WrongChannel
+        })?;
+        let kill_result = portable_pty::ChildKiller::kill(killer.as_mut()).map_err(|e| {
+            log::error!("Failed to kill child: {e}");
+            russh::Error::HUP
+        });
+        self.session.writers.remove(&channel);
+        self.session.masters.remove(&channel);
+        kill_result
     }
 
     async fn channel_eof(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         _session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        Ok(())
+        let mut killer = self.session.killers.remove(&channel).ok_or_else(|| {
+            log::error!("EOF for unknown channel: {:?}", channel);
+            russh::Error::WrongChannel
+        })?;
+        let kill_result = portable_pty::ChildKiller::kill(killer.as_mut()).map_err(|e| {
+            log::error!("Failed to kill child: {e}");
+            russh::Error::HUP
+        });
+        self.session.writers.remove(&channel);
+        self.session.masters.remove(&channel);
+        kill_result
     }
 
     async fn pty_request(
@@ -427,40 +456,114 @@ impl server::Handler for Server {
 
     async fn shell_request(
         &mut self,
-        _channel: ChannelId,
-        _session: &mut server::Session,
+        channel: ChannelId,
+        session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        Ok(())
+        self.spawn_shell(channel, session).await
     }
 
     async fn exec_request(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         _data: &[u8],
-        _session: &mut server::Session,
+        session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        Ok(())
+        self.spawn_shell(channel, session).await
     }
 
     async fn window_change_request(
         &mut self,
-        _channel: ChannelId,
-        _col_width: u32,
-        _row_height: u32,
-        _pix_width: u32,
-        _pix_height: u32,
-        _session: &mut server::Session,
+        channel: ChannelId,
+        col_width: u32,
+        row_height: u32,
+        pix_width: u32,
+        pix_height: u32,
+        session: &mut server::Session,
     ) -> Result<(), Self::Error> {
+        let (cols, rows, pixel_width, pixel_height) = match (
+            u16::try_from(col_width),
+            u16::try_from(row_height),
+            u16::try_from(pix_width),
+            u16::try_from(pix_height),
+        ) {
+            (Ok(cols), Ok(rows), Ok(pixel_width), Ok(pixel_height)) => {
+                (cols, rows, pixel_width, pixel_height)
+            }
+            _ => {
+                log::error!("Invalid window size: {col_width}x{row_height}");
+                return Err(russh::Error::WrongChannel);
+            }
+        };
+        let master = self.session.masters.get(&channel).ok_or_else(|| {
+            log::error!("Window change for unknown channel: {:?}", channel);
+            russh::Error::WrongChannel
+        })?;
+        portable_pty::MasterPty::resize(
+            master.as_ref(),
+            PtySize {
+                cols,
+                rows,
+                pixel_width,
+                pixel_height,
+            },
+        )
+        .map_err(|e| {
+            log::error!("Failed to resize PTY: {e}");
+            russh::Error::HUP
+        })?;
+        session.channel_success(channel)?;
         Ok(())
     }
 
     async fn signal(
         &mut self,
-        _channel: ChannelId,
-        _signal: russh::Sig,
+        channel: ChannelId,
+        signal: russh::Sig,
         _session: &mut server::Session,
     ) -> Result<(), Self::Error> {
+        log::debug!("Signal {:?} for channel {:?}", signal, channel);
+        let killer = self.session.killers.get_mut(&channel).ok_or_else(|| {
+            log::error!("Signal for unknown channel: {:?}", channel);
+            russh::Error::WrongChannel
+        })?;
+        portable_pty::ChildKiller::kill(killer.as_mut()).map_err(|e| {
+            log::error!("Failed to kill child on signal: {e}");
+            russh::Error::HUP
+        })?;
         Ok(())
+    }
+
+    async fn subsystem_request(
+        &mut self,
+        channel: ChannelId,
+        name: &str,
+        session: &mut server::Session,
+    ) -> Result<(), Self::Error> {
+        log::error!("Subsystem request denied: {name}");
+        session.channel_failure(channel)?;
+        Err(russh::Error::RequestDenied)
+    }
+
+    async fn env_request(
+        &mut self,
+        channel: ChannelId,
+        variable_name: &str,
+        _variable_value: &str,
+        session: &mut server::Session,
+    ) -> Result<(), Self::Error> {
+        log::error!("Env request denied: {variable_name}");
+        session.channel_failure(channel)?;
+        Err(russh::Error::RequestDenied)
+    }
+
+    async fn tcpip_forward(
+        &mut self,
+        address: &str,
+        _port: &mut u32,
+        _session: &mut server::Session,
+    ) -> Result<bool, Self::Error> {
+        log::error!("TCP/IP forward denied: {address}");
+        Err(russh::Error::RequestDenied)
     }
 }
 
