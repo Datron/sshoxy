@@ -1,0 +1,17 @@
+[package]
+name = "arcade"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "arcade"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+rand = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
+directories = "6"
+chrono = "0.4"
+anyhow = "1"
