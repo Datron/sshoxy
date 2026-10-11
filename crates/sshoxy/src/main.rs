@@ -8,13 +8,6 @@ use russh::{
 };
 use tokio::net::TcpListener;
 
-// sshoxy arcade
-// - snake
-// - alien destroyer
-// - ball hit wall and remove
-// - tetris
-// - battleship
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -151,7 +144,6 @@ struct Session {
     pub killers: HashMap<ChannelId, Box<dyn portable_pty::ChildKiller + Send + Sync>>,
     pub masters: HashMap<ChannelId, Box<dyn portable_pty::MasterPty + Send>>,
 }
-
 
 struct Server {
     pub welcome_message: Option<String>,

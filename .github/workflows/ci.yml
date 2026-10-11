@@ -14,7 +14,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.0
-          components: clippy
+          components: clippy, rustfmt
+      - name: Fmt
+        run: cargo fmt --all -- --check
       - name: Build
         run: cargo build --workspace --all-targets
       - name: Clippy
