@@ -141,6 +141,7 @@ struct Args {
     no_auth: bool,
 }
 
+#[derive(Default)]
 struct Session {
     pub user: String,
     pub public_key: Option<russh::keys::ssh_key::PublicKey>,
@@ -151,19 +152,6 @@ struct Session {
     pub masters: HashMap<ChannelId, Box<dyn portable_pty::MasterPty + Send>>,
 }
 
-impl Default for Session {
-    fn default() -> Self {
-        Self {
-            user: String::new(),
-            public_key: None,
-            term: String::new(),
-            size: PtySize::default(),
-            writers: HashMap::new(),
-            killers: HashMap::new(),
-            masters: HashMap::new(),
-        }
-    }
-}
 
 struct Server {
     pub welcome_message: Option<String>,
@@ -199,7 +187,7 @@ impl Server {
             })
         })?;
         let pair = portable_pty::native_pty_system()
-            .openpty(self.session.size.clone())
+            .openpty(self.session.size)
             .map_err(|e| {
                 log::error!("Could not setup PTY due to: {}", e);
                 russh::Error::HUP
