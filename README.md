@@ -28,7 +28,7 @@ sshoxy (pronounced shock-see) is a ssh server that acts as a proxy for ssh conne
 The easiest way to get started is to use the prebuilt binaries from the [releases](https://github.com/datron/sshoxy/releases) page. A helper script has been provided with this repo to install sshoxy
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/datron/sshoxy/main/install.sh | bash
+curl -sSL https://github.com/Datron/sshoxy/releases/download/v0.2.0/install.sh | bash
 ```
 
 # Try it
@@ -36,5 +36,5 @@ curl -sSL https://raw.githubusercontent.com/datron/sshoxy/main/install.sh | bash
 No guarantees that the server stays up, but you can try it out by running the following command:
 
 ```bash
-ssh -p 2222 <username>@arcade.jilebi.dev
+ssh -p 2222 <username>@arcade.jilebi.ai
 ```
