@@ -8,3 +8,4 @@
 *.swp
 *.swo
 /dist/
+.cargo
