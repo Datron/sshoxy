@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    env:
+      # .cargo/config.toml pins target-dir to a local absolute path;
+      # override it so `target/...` lookups below work on runners.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          targets: ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked -p sshoxy --release --target ${{ matrix.target }}
+      - name: Stage package contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/sshoxy"
+          STAGE="staging/sshoxy-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/sshoxy"
+          chmod +x "$STAGE/sshoxy"
+          cp README.md "$STAGE/"
+          cp LICENSE "$STAGE/"
+          ls -l "$STAGE"
+      - name: Create zip archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="staging/sshoxy-${{ matrix.target }}"
+          ZIP="sshoxy-${{ matrix.target }}.zip"
+          rm -f "$ZIP"
+          (cd "$STAGE" && zip -j "../../$ZIP" sshoxy README.md LICENSE)
+          ls -lh "$ZIP"
+          unzip -l "$ZIP"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshoxy-${{ matrix.target }}
+          path: sshoxy-${{ matrix.target }}.zip
+          if-no-files-found: error
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sshoxy-${{ matrix.target }}.zip
+          generate_release_notes: true

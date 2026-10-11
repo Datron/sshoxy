@@ -1,0 +1,61 @@
+name: Bump version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver increment (auto derives it from conventional commits)"
+        required: true
+        default: auto
+        type: choice
+        options: [auto, patch, minor, major]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bump:
+    name: cog bump
+    runs-on: ubuntu-latest
+    env:
+      # .cargo/config.toml pins target-dir to a local absolute path;
+      # override it so cog's cargo pre-bump hooks run in the workspace.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          components: clippy, rustfmt
+      - name: Install cog and cargo-edit
+        run: |
+          set -euo pipefail
+          # cargo-edit provides `cargo set-version` used by cog's
+          # post_package_bump_hooks in cog.toml.
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall -y --version 7.0.0 cocogitto
+          cargo binstall -y cargo-edit
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Bump version with cog
+        run: cog bump --${{ inputs.bump }}
+      - name: Push bump commit and tags
+        # cog's post_bump_hooks already push; these are idempotent backup.
+        run: |
+          git push
+          git push --tags
+      - name: Trigger Release workflow
+        # Tags pushed with GITHUB_TOKEN do not trigger workflows, so the
+        # tag-triggered Release run is started explicitly on the new tag.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v$(cog get-version 2>/dev/null | tail -n 1)"
+          echo "Triggering Release workflow for $TAG"
+          gh workflow run Release --ref "$TAG"

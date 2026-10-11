@@ -1,6 +1,7 @@
 #:schema https://docs.cocogitto.io/cog-schema.json
 
-branch_whitelist = ["main"]
+branch_whitelist = ["master"]
+tag_prefix = "v"
 ignore_merge_commits = true
 generate_mono_repository_global_tag = true
 generate_mono_repository_package_tags = true
@@ -28,7 +29,7 @@ post_package_bump_hooks = [
 path = "CHANGELOG.md"
 template = "remote"
 remote = "github.com"
-owner = "sshoxy"
+owner = "Datron"
 repository = "sshoxy"
 
 [monorepo]
