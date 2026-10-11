@@ -32,6 +32,11 @@ remote = "github.com"
 owner = "Datron"
 repository = "sshoxy"
 
+[commit_types]
+feat = { bump_minor = true }
+fix = { bump_patch = true }
+refactor = { bump_patch = true }
+
 [monorepo]
 resolver = "Cargo"
 
