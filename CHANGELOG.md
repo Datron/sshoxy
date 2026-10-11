@@ -2,6 +2,16 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.2.0](https://github.com/Datron/sshoxy/compare/ddc0491309c2fbb0922d6a2aba3a6a59a46d3013..v0.2.0) - 2026-10-11
+#### Features
+- add readme and update bump - ([1f7abd8](https://github.com/Datron/sshoxy/commit/1f7abd80fda8b8ebb98ccb6beff09830f9c29f7e)) - datron
+- update cog and release.yml to publish install.sh - ([ce9a141](https://github.com/Datron/sshoxy/commit/ce9a14126bbb6d12f87f6c1d874c3836acde8567)) - datron
+- add demo arcade as an example - ([ddc0491](https://github.com/Datron/sshoxy/commit/ddc0491309c2fbb0922d6a2aba3a6a59a46d3013)) - datron
+#### Bug Fixes
+- push all tags after bump so v-prefixed tags reach origin - ([7f23a77](https://github.com/Datron/sshoxy/commit/7f23a772c9ffda6bb9e280ddf6f0db9695261ec4)) - datron
+
+- - -
+
 ## [v0.1.0](https://github.com/Datron/sshoxy/compare/a9338149c8c2479a3c0b99cfb24efcc29be1986e..v0.1.0) - 2026-10-11
 ### Package updates
 - [sshoxy](crates/sshoxy) bumped to [sshoxy-v0.1.0](https://github.com/Datron/sshoxy/compare/a9338149c8c2479a3c0b99cfb24efcc29be1986e..sshoxy-v0.1.0)
